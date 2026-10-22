@@ -114,6 +114,11 @@ so float drift cannot leak into displayed totals. Headline figures are shown in
 whole currency units; reconciliation differences use the currency's full
 minor-unit precision so a small mismatch is never displayed as zero.
 
+`tests/sentry.test.ts` covers the Sentry options and the allowlist event
+scrubber in `src/lib/sentry.ts`. Sentry is wired for the server runtimes only
+through `instrumentation.ts` and stays off unless `SENTRY_DSN` is set; see
+`PRODUCT.md`.
+
 `npm run build` produces a production Next.js artifact. Deployment still needs
 an approved gateway/TLS setup, managed secret injection, and a real concurrent
 load test before production promotion.
