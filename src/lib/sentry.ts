@@ -5,7 +5,10 @@
 // This dashboard renders finance data, so scrubbing is an allowlist: an event is
 // rebuilt from the fields below and everything else (request URL, query, headers,
 // cookies, user, extra, tags, breadcrumbs, stack-frame locals and source lines) is
-// dropped before it leaves the server.
+// dropped before it leaves the server. Messages are allowlisted too: an exception
+// value or event message is sent only if it is one of the app's own static error
+// messages (src/lib/finance.ts); any other text, including linked causes, becomes
+// "[redacted]" because free text can carry holding names, amounts or URLs.
 
 type Json = Record<string, unknown>;
 
@@ -13,7 +16,17 @@ const EVENT_FIELDS = ["event_id", "timestamp", "level", "platform", "logger", "r
 const CONTEXT_FIELDS = ["runtime", "os"] as const;
 const FRAME_FIELDS = ["filename", "module", "function", "lineno", "colno", "in_app"] as const;
 const MECHANISM_FIELDS = ["type", "handled"] as const;
-const MAX_MESSAGE_LENGTH = 500;
+export const REDACTED = "[redacted]";
+
+const ALLOWED_MESSAGES: ReadonlySet<string> = new Set([
+  "Finance API returned an invalid payload shape",
+  "FINANCE_API_TOKEN is not configured",
+  "BookFinance API returned an unsupported schema",
+  "Finance API returned invalid pagination metadata",
+  "Finance API returned a non-progressing pagination cursor",
+  "Finance API pagination exceeded the safety limit",
+]);
+const ALLOWED_MESSAGE_PATTERNS: readonly RegExp[] = [/^BookFinance API returned HTTP \d{3}$/];
 
 function isRecord(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -27,14 +40,17 @@ function pick(source: Json, fields: readonly string[]): Json {
   return out;
 }
 
-function clip(value: unknown): unknown {
-  return typeof value === "string" && value.length > MAX_MESSAGE_LENGTH ? `${value.slice(0, MAX_MESSAGE_LENGTH)}…` : value;
+/** Returns the message if it is one of the app's static messages, else "[redacted]". */
+export function allowMessage(value: unknown): string {
+  if (typeof value !== "string") return REDACTED;
+  if (ALLOWED_MESSAGES.has(value) || ALLOWED_MESSAGE_PATTERNS.some((pattern) => pattern.test(value))) return value;
+  return REDACTED;
 }
 
 function scrubException(value: unknown): Json | null {
   if (!isRecord(value)) return null;
   const out: Json = pick(value, ["type"]);
-  if (value.value !== undefined) out.value = clip(value.value);
+  if (value.value !== undefined) out.value = allowMessage(value.value);
   if (isRecord(value.mechanism)) out.mechanism = pick(value.mechanism, MECHANISM_FIELDS);
   const frames = isRecord(value.stacktrace) && Array.isArray(value.stacktrace.frames) ? value.stacktrace.frames : null;
   if (frames) out.stacktrace = { frames: frames.filter(isRecord).map((frame) => pick(frame, FRAME_FIELDS)) };
@@ -46,7 +62,7 @@ export function scrubEvent<T extends object>(event: T): T {
   const source = event as Json;
   const out: Json = pick(source, EVENT_FIELDS);
 
-  if (typeof source.message === "string") out.message = clip(source.message);
+  if (source.message !== undefined) out.message = allowMessage(source.message);
   if (isRecord(source.exception) && Array.isArray(source.exception.values)) {
     out.exception = { values: source.exception.values.map(scrubException).filter((v): v is Json => v !== null) };
   }
